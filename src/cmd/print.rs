@@ -6,57 +6,24 @@ use crate::{
     devices::{Device, REGISTRY},
     probe,
     probe::{Log, Probe},
-    utils::crate_root,
 };
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result};
 use prettytable::{cell, format, row, Table};
-use serde::Deserialize;
 use std::{
-    fs::File,
-    io::{prelude::*, stdout},
+    io::{stdout},
 };
 
-const CARGO_CONFIG_PATH: &str = ".cargo/config";
-
-#[non_exhaustive]
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct CargoConfig {
-    build: Option<CargoConfigBuild>,
-}
-
-#[non_exhaustive]
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct CargoConfigBuild {
-    target: Option<String>,
-}
-
+// const CARGO_CONFIG_PATH: &str = ".cargo/config";
 /// Runs `drone print` command.
-pub fn run(cmd: PrintCmd, color: Color) -> Result<()> {
+pub async fn run(cmd: PrintCmd, color: Color) -> Result<()> {
     let PrintCmd { print_sub_cmd } = cmd;
     match print_sub_cmd {
-        PrintSubCmd::Target => target(),
+        PrintSubCmd::Target => {
+            println!("{}", crate::utils::resolve_target().await?);
+            Ok(())
+        },
         PrintSubCmd::SupportedDevices => supported_devices(color),
     }
-}
-
-fn target() -> Result<()> {
-    let crate_root = crate_root()?.canonicalize()?;
-    let path = crate_root.join(CARGO_CONFIG_PATH);
-    if !path.exists() {
-        bail!("`{}` not exists in `{}", CARGO_CONFIG_PATH, crate_root.display());
-    }
-    let mut buffer = String::new();
-    let mut file = File::open(&path)?;
-    file.read_to_string(&mut buffer)?;
-    let config = toml::from_str::<CargoConfig>(&buffer)?;
-    let target = config
-        .build
-        .and_then(|build| build.target)
-        .ok_or_else(|| anyhow!("No [build.target] configuration in {}", CARGO_CONFIG_PATH))?;
-    println!("{}", target);
-    Ok(())
 }
 
 fn supported_devices(color: Color) -> Result<()> {
@@ -98,13 +65,13 @@ fn supported_devices(color: Color) -> Result<()> {
 fn probe_cell(probe: Option<Probe>, log_swo: bool, log_dso: bool, color: Color) -> String {
     if let Some(probe) = probe {
         let mut logs = Vec::new();
-        if log_swo && probe::log(probe, Log::SwoProbe).is_some() {
+        if log_swo && probe::supports_log(probe, Log::SwoProbe) {
             logs.push(color.bold("swoprobe"));
         }
-        if log_swo && probe::log(probe, Log::SwoSerial).is_some() {
+        if log_swo && probe::supports_log(probe, Log::SwoSerial) {
             logs.push(color.bold("swoserial"));
         }
-        if log_dso && probe::log(probe, Log::DsoSerial).is_some() {
+        if log_dso && probe::supports_log(probe, Log::DsoSerial) {
             logs.push(color.bold("dsoserial"));
         }
         format!("--log {}", logs.join("/"))

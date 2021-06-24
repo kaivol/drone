@@ -16,13 +16,13 @@ use std::{
     fs::{create_dir, read_to_string, remove_file, File},
     io::Write,
     path::Path,
-    process::Command,
 };
+use tokio::process::Command;
 
 const HEAP_POOLS: u32 = 8;
 
 /// Runs `drone new` command.
-pub fn run(cmd: NewCmd, color: Color) -> Result<()> {
+pub async fn run(cmd: NewCmd, color: Color) -> Result<()> {
     let NewCmd { path, device, flash_size, ram_size, probe, log, name, toolchain } = cmd;
     let device = devices::find(&device)?;
     let registry = Registry::new()?;
@@ -47,7 +47,7 @@ pub fn run(cmd: NewCmd, color: Color) -> Result<()> {
     let heap = new_heap(ram_size / 2, HEAP_POOLS)?;
     let (probe, log) = choose_probe_and_log(device, probe, log)?;
 
-    cargo_new(&path, &toolchain)?;
+    cargo_new(&path, &toolchain).await?;
     src_main_rs(&path, color)?;
     src_bin_name_rs(&path, device, &name, &underscore_name, &registry, color)?;
     src_lib_rs(&path, device, log, &registry, color)?;
@@ -71,26 +71,26 @@ fn choose_probe_and_log(
 ) -> Result<(Probe, Log)> {
     if probe.is_none() {
         if device.probe_bmp.is_some()
-            && log.map_or(true, |log| probe::log(Probe::Bmp, log).is_some())
+            && log.map_or(true, |log| probe::supports_log(Probe::Bmp, log))
         {
             probe = Some(Probe::Bmp);
         } else if device.probe_jlink.is_some()
-            && log.map_or(true, |log| probe::log(Probe::Jlink, log).is_some())
+            && log.map_or(true, |log| probe::supports_log(Probe::Jlink, log))
         {
             probe = Some(Probe::Jlink);
         } else if device.probe_openocd.is_some()
-            && log.map_or(true, |log| probe::log(Probe::Openocd, log).is_some())
+            && log.map_or(true, |log| probe::supports_log(Probe::Openocd, log))
         {
             probe = Some(Probe::Openocd);
         }
     }
     if log.is_none() {
         if let Some(probe) = probe {
-            if device.log_swo.is_some() && probe::log(probe, Log::SwoProbe).is_some() {
+            if device.log_swo.is_some() && probe::supports_log(probe, Log::SwoProbe) {
                 log = Some(Log::SwoProbe);
-            } else if device.log_swo.is_some() && probe::log(probe, Log::SwoSerial).is_some() {
+            } else if device.log_swo.is_some() && probe::supports_log(probe, Log::SwoSerial) {
                 log = Some(Log::SwoSerial);
-            } else if device.log_dso.is_some() && probe::log(probe, Log::DsoSerial).is_some() {
+            } else if device.log_dso.is_some() && probe::supports_log(probe, Log::DsoSerial) {
                 log = Some(Log::DsoSerial);
             }
         }
@@ -107,11 +107,11 @@ fn new_heap(size: u32, pools: u32) -> Result<String> {
     Ok(String::from_utf8(output)?)
 }
 
-fn cargo_new(path: &Path, toolchain: &str) -> Result<()> {
+async fn cargo_new(path: &Path, toolchain: &str) -> Result<()> {
     let mut rustup = Command::new("rustup");
     rustup.arg("run").arg(toolchain);
     rustup.arg("cargo").arg("new").arg("--bin").arg(path);
-    run_command(rustup)
+    run_command(rustup).await
 }
 
 fn src_main_rs(path: &Path, color: Color) -> Result<()> {

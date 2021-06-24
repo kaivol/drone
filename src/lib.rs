@@ -30,7 +30,9 @@
 #![feature(generator_trait)]
 #![feature(generators)]
 #![feature(never_type)]
-#![warn(missing_docs, unsafe_op_in_unsafe_fn)]
+// #![feature(type_alias_impl_trait)]
+#![feature(min_type_alias_impl_trait)]
+// TODO document later #![warn(missing_docs, unsafe_op_in_unsafe_fn)]
 #![warn(clippy::pedantic)]
 #![allow(
     clippy::cast_possible_truncation,
@@ -65,7 +67,7 @@ use env_logger::Builder as LoggerBuilder;
 
 impl Cli {
     /// Runs the program.
-    pub fn run(self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
         let Self { cmd, color, verbosity } = self;
         let log_level = match verbosity {
             0 => Level::Error,
@@ -79,13 +81,13 @@ impl Cli {
             .filter(None, Level::Warn.to_level_filter())
             .try_init()?;
         match cmd {
-            Cmd::Flash(cmd) => cmd::flash(cmd),
-            Cmd::Gdb(cmd) => cmd::gdb(cmd),
+            Cmd::Flash(cmd) => cmd::flash(cmd).await,
+            Cmd::Gdb(cmd) => cmd::gdb(cmd).await,
             Cmd::Heap(cmd) => cmd::heap(cmd, color),
-            Cmd::Log(cmd) => cmd::log(cmd, color),
-            Cmd::New(cmd) => cmd::new(cmd, color),
-            Cmd::Reset(cmd) => cmd::reset(cmd),
-            Cmd::Print(cmd) => cmd::print(cmd, color),
+            Cmd::Log(cmd) => cmd::log(cmd, color).await,
+            Cmd::New(cmd) => cmd::new(cmd, color).await,
+            Cmd::Reset(cmd) => cmd::reset(cmd).await,
+            Cmd::Print(cmd) => cmd::print(cmd, color).await,
         }
     }
 }

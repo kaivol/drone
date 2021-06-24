@@ -1,6 +1,6 @@
 //! Drone Serial Output protocol.
 
-use super::{Output, OutputMap};
+use super::{OutputMap};
 use anyhow::Result;
 use std::{ops::Generator, pin::Pin};
 
@@ -8,9 +8,9 @@ const KEY: u8 = 0b100_1011;
 
 /// Creates a new DSO parser.
 pub fn parser(
-    outputs: &[Output],
-) -> Pin<Box<dyn Generator<u8, Yield = (), Return = Result<!>> + '_>> {
-    let outputs = OutputMap::from(outputs);
+    mut outputs: OutputMap,
+) -> Pin<Box<dyn Generator<u8, Yield = (), Return = Result<!>>>> {
+    // let mut outputs = OutputMap::from(outputs);
     let mut payload = Vec::with_capacity(16);
     Box::pin(static move |mut byte| {
         loop {

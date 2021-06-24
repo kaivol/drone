@@ -1,29 +1,32 @@
 //! Debug probe interface.
 
-pub mod bmp;
-pub mod jlink;
-pub mod openocd;
+use std::{
+    convert::TryFrom,
+    path::{Path},
+};
+use tokio::io::{BufReader};
+// use std::process::Stdio;
+use anyhow::{anyhow, bail, Error, Result};
+use serde::{Deserialize, Serialize};
+use tokio::process::Command;
+
+use drone_config as config;
 
 use crate::{
     cli::{FlashCmd, GdbCmd, LogCmd, ResetCmd},
     color::Color,
     templates::Registry,
-    utils::{block_with_signals, detach_pgid, finally, run_command, spawn_command},
+    utils::{spawn_command},
 };
-use ansi_term::Color::Cyan;
-use anyhow::{anyhow, bail, Error, Result};
-use drone_config as config;
-use serde::{Deserialize, Serialize};
-use signal_hook::iterator::Signals;
-use std::{
-    convert::TryFrom,
-    ffi::OsString,
-    fs::OpenOptions,
-    io::{prelude::*, BufRead, BufReader},
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
-    thread,
-};
+use crate::utils::{SignalStream, run_command, WithSignals};
+use tokio::io::{AsyncBufReadExt};
+use std::process::Stdio;
+use std::future::Future;
+use std::ffi::OsString;
+
+pub mod bmp;
+pub mod jlink;
+pub mod openocd;
 
 /// An `enum` of all supported debug probes.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -58,9 +61,9 @@ impl<'a> TryFrom<&'a config::Config> for Probe {
             .as_ref()
             .ok_or_else(|| anyhow!("Missing `probe` section in `{}`", config::CONFIG_NAME))?;
         if config_probe.bmp.is_some() {
-            Ok(Self::Bmp)
+            bail!("BMP not supported");
         } else if config_probe.jlink.is_some() {
-            Ok(Self::Jlink)
+            bail!("JLink not supported");
         } else if config_probe.openocd.is_some() {
             Ok(Self::Openocd)
         } else {
@@ -94,83 +97,121 @@ impl<'a> TryFrom<&'a config::Config> for Log {
     }
 }
 
-type LogFn = fn(LogCmd, Signals, Registry<'_>, config::Config, Color) -> Result<()>;
-type ResetFn = fn(ResetCmd, Signals, Registry<'_>, config::Config) -> Result<()>;
-type FlashFn = fn(FlashCmd, Signals, Registry<'_>, config::Config) -> Result<()>;
-type GdbFn = fn(GdbCmd, Signals, Registry<'_>, config::Config) -> Result<()>;
-
-/// Returns a function to serve `drone reset` command.
-pub fn reset(probe: Probe) -> ResetFn {
-    match probe {
-        Probe::Bmp => bmp::reset,
-        Probe::Jlink => jlink::reset,
-        Probe::Openocd => openocd::reset,
+impl Probe {
+    /// Returns a function to serve `drone reset` command.
+    #[allow(unused_variables)]
+    pub(crate) async fn reset(
+        self,
+        cmd: ResetCmd,
+        signals: SignalStream,
+        registry: Registry<'_>,
+        config: config::Config,
+    ) -> Result<()> {
+        match self {
+            // Probe::Bmp => bmp::reset(cmd, signals, registry, config).await,
+            // Probe::Jlink => jlink::reset(cmd, signals, registry, config).await,
+            // Probe::Openocd => openocd::reset(cmd, signals, registry, config).await,
+            _ => bail!("flash is unsupported")
+        }
     }
-}
 
-/// Returns a function to serve `drone flash` command.
-pub fn flash(probe: Probe) -> FlashFn {
-    match probe {
-        Probe::Bmp => bmp::flash,
-        Probe::Jlink => jlink::flash,
-        Probe::Openocd => openocd::flash,
+    /// Returns a function to serve `drone flash` command.
+    #[allow(unused_variables)]
+    pub(crate) async fn flash(
+        self,
+        cmd: FlashCmd,
+        signals: SignalStream,
+        registry: Registry<'_>,
+        config: config::Config,
+    ) -> Result<()> {
+        match self {
+            // Probe::Bmp => bmp::flash(cmd, signals, registry, config).await,
+            // Probe::Jlink => jlink::flash(cmd, signals, registry, config).await,
+            // Probe::Openocd => openocd::flash(cmd, signals, registry, config).await,
+            _ => bail!("flash is unsupported")
+        }
     }
-}
 
-/// Returns a function to serve `drone gdb` command.
-pub fn gdb(probe: Probe) -> GdbFn {
-    match probe {
-        Probe::Bmp => bmp::gdb,
-        Probe::Jlink => jlink::gdb,
-        Probe::Openocd => openocd::gdb,
+    /// Returns a function to serve `drone gdb` command.
+    #[allow(unused_variables)]
+    pub(crate) async fn gdb(
+        self,
+        cmd: GdbCmd,
+        signals: SignalStream,
+        registry: Registry<'_>,
+        config: config::Config,
+    ) -> Result<()> {
+        match self {
+            // Probe::Bmp => bmp::gdb(cmd, signals, registry, config).await,
+            // Probe::Jlink => jlink::gdb(cmd, signals, registry, config).await,
+            // Probe::Openocd => openocd::gdb(cmd, signals, registry, config).await,
+            _ => bail!("flash is unsupported")
+        }
     }
 }
 
 /// Returns a function to serve `drone log` command.
-pub fn log(probe: Probe, log: Log) -> Option<LogFn> {
+pub async fn log(
+    probe: Probe,
+    log: Log,
+    cmd: LogCmd,
+    signals: SignalStream,
+    registry: Registry<'_>,
+    config: config::Config,
+    color: Color,
+) -> Option<Result<()>> {
     match (probe, log) {
-        (Probe::Bmp, Log::SwoSerial) => Some(bmp::log_swo_serial),
-        (Probe::Jlink, Log::DsoSerial) => Some(jlink::log_dso_serial),
-        (Probe::Openocd, Log::SwoProbe | Log::SwoSerial) => Some(openocd::log_swo),
+        // (Probe::Bmp, Log::SwoSerial) =>
+        //     Some(bmp::log_swo_serial(cmd, signals, registry, config, color).await),
+        // (Probe::Jlink, Log::DsoSerial) =>
+        //     Some(jlink::log_dso_serial(cmd, signals, registry, config, color).await),
+        (Probe::Openocd, Log::SwoProbe | Log::SwoSerial) =>
+            Some(openocd::log_swo(cmd, signals, registry, config, color).await),
         _ => None,
     }
 }
 
-/// Configures the endpoint with `stty` command.
-pub fn setup_serial_endpoint(signals: &mut Signals, endpoint: &str, baud_rate: u32) -> Result<()> {
-    let mut stty = Command::new("stty");
-    stty.arg(format!("--file={}", endpoint));
-    stty.arg("speed");
-    stty.arg(format!("{}", baud_rate));
-    stty.arg("raw");
-    block_with_signals(signals, true, || run_command(stty))
+/// Returns whether or not the given configuration supports logging
+pub fn supports_log(probe: Probe, log: Log) -> bool {
+    match (probe, log) {
+        // (Probe::Bmp, Log::SwoSerial) |
+        // (Probe::Jlink, Log::DsoSerial) |
+        (Probe::Openocd, Log::SwoProbe | Log::SwoSerial) => true,
+        _ => false,
+    }
 }
 
 /// Runs a GDB server.
-pub fn run_gdb_server(mut gdb: Command, interpreter: Option<&str>) -> Result<impl Drop> {
-    if interpreter.is_some() {
-        gdb.stdout(Stdio::piped());
-    }
-    detach_pgid(&mut gdb);
+pub async fn run_gdb_server<T>(
+    mut gdb: Command,
+    // interpreter: Option<&str>,
+    f: impl Future<Output=Result<T>>,
+) -> Result<T> {
+    // if interpreter.is_some() {
+    //     gdb.stdout(Stdio::piped());
+    // }
+    // detach_pgid(&mut gdb); // TODO
     let mut gdb = spawn_command(gdb)?;
-    if interpreter.is_some() {
-        if let Some(stdout) = gdb.stdout.take() {
-            let stdout = BufReader::new(stdout);
-            thread::spawn(move || {
-                for line in stdout.lines() {
-                    let mut line = line.expect("gdb-server stdout pipe fail");
-                    line.push('\n');
-                    println!("~{:?}", line);
-                }
-            });
-        }
-    }
-    Ok(finally(move || gdb.kill().expect("gdb-server wasn't running")))
+    // if interpreter.is_some() {
+    //     if let Some(stdout) = gdb.stdout.take() {
+    //          tokio::spawn(async move {
+    //             let stdout = BufReader::new(stdout);
+    //             for line in  stdout.lines().next_line().await {
+    //                 let mut line = line.expect("gdb-server stdout pipe fail");
+    //                 line.push('\n');
+    //                 println!("~{:?}", line);
+    //             }
+    //         });
+    //     }
+    // }
+    let result = f.await?;
+    gdb.kill().await.expect("gdb-server wasn't running");
+    Ok(result)
 }
 
 /// Runs a GDB client.
-pub fn run_gdb_client(
-    signals: &mut Signals,
+pub async fn run_gdb_client(
+    signals: &mut SignalStream,
     config: &config::Config,
     gdb_args: &[OsString],
     firmware: Option<&Path>,
@@ -188,7 +229,7 @@ pub fn run_gdb_client(
     if let Some(interpreter) = interpreter {
         gdb.arg("--interpreter").arg(interpreter);
     }
-    block_with_signals(signals, true, || run_command(gdb))
+    run_command(gdb).with_signals(signals, true).await
 }
 
 /// Creates a GDB script command.
@@ -208,38 +249,15 @@ pub fn gdb_script_command(
     gdb
 }
 
-/// Waits for the other side of `pipe`.
-pub fn gdb_script_wait(signals: &mut Signals, pipe: PathBuf) -> Result<(PathBuf, [u8; 1])> {
-    block_with_signals(signals, false, move || {
-        let mut packet = [0];
-        OpenOptions::new().read(true).open(&pipe)?.read_exact(&mut packet)?;
-        Ok((pipe, packet))
-    })
-}
-
-/// Signals the other size of `pipe`.
-pub fn gdb_script_continue(signals: &mut Signals, pipe: PathBuf, packet: [u8; 1]) -> Result<()> {
-    block_with_signals(signals, false, move || {
-        OpenOptions::new().write(true).open(&pipe)?.write_all(&packet)?;
-        Ok(())
-    })
-}
-
-/// Displays a banner representing beginning of log output.
-pub fn begin_log_output(color: Color) {
-    eprintln!();
-    eprintln!("{}", color.bold_fg(&format!("{:=^80}", " LOG OUTPUT "), Cyan));
-}
-
 /// Returns a GDB substitute-path for rustc sources.
-pub fn rustc_substitute_path() -> Result<String> {
+pub async fn rustc_substitute_path() -> Result<String> {
     let mut rustc = Command::new("rustc");
     rustc.arg("--print").arg("sysroot");
-    let sysroot = String::from_utf8(rustc.output()?.stdout)?.trim().to_string();
+    let sysroot = String::from_utf8(rustc.output().await?.stdout)?.trim().to_string();
     let mut rustc = Command::new("rustc");
     rustc.arg("--verbose");
     rustc.arg("--version");
-    let commit_hash = String::from_utf8(rustc.output()?.stdout)?
+    let commit_hash = String::from_utf8(rustc.output().await?.stdout)?
         .lines()
         .find_map(|line| {
             line.starts_with("commit-hash: ").then(|| line.splitn(2, ": ").nth(1).unwrap())

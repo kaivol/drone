@@ -1,6 +1,6 @@
 //! ARM® Single Wire Output protocol.
 
-use super::{Output, OutputMap};
+use super::{OutputMap};
 use anyhow::Result;
 use std::{ops::Generator, pin::Pin};
 
@@ -13,16 +13,15 @@ enum Timestamp {
 /// Creates a new ITM parser.
 #[allow(clippy::shadow_unrelated, clippy::too_many_lines)]
 pub fn parser(
-    outputs: &[Output],
-) -> Pin<Box<dyn Generator<u8, Yield = (), Return = Result<!>> + '_>> {
+    mut outputs: OutputMap,
+) -> Pin<Box<dyn Generator<u8, Yield = (), Return = Result<!>> + Send>> {
     fn recycle(bytes: &mut Vec<u8>, payload: &[u8]) {
         for &byte in payload.iter().rev() {
             bytes.push(byte);
         }
     }
-    let outputs = OutputMap::from(outputs);
-    let mut payload = Vec::with_capacity(8);
     Box::pin(static move |byte: u8| {
+        let mut payload = Vec::with_capacity(8);
         let mut bytes = vec![byte];
         loop {
             if let Some(byte) = bytes.pop() {
@@ -113,7 +112,7 @@ pub fn parser(
                     while payload.len() < size {
                         payload.push(yield);
                     }
-                    source_packet(software, address, &payload, &outputs)?;
+                    source_packet(software, address, &payload, &mut outputs)?;
                 }
             } else {
                 bytes.push(yield);
@@ -144,7 +143,7 @@ fn timestamp_packet(timestamp: &Timestamp, payload: &[u8]) {
     }
 }
 
-fn source_packet(software: bool, port: u8, payload: &[u8], outputs: &OutputMap<'_>) -> Result<()> {
+fn source_packet(software: bool, port: u8, payload: &[u8], outputs: &mut OutputMap) -> Result<()> {
     log::debug!(
         "Port {} {} packet {:?} {:?}",
         port,

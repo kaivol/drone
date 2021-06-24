@@ -5,13 +5,13 @@ pub mod helpers;
 use crate::{
     devices::Device,
     probe::{Log, Probe},
-    utils::{ser_to_string, temp_dir},
+    utils::{ser_to_string},
 };
 use anyhow::Result;
 use drone_config::Config;
 use handlebars::Handlebars;
 use serde_json::json;
-use std::{collections::BTreeSet, error::Error, fs::File, io::Write, path::Path};
+use std::{collections::BTreeSet, error::Error, fs::File, io::Write, path::Path, env};
 use tempfile::NamedTempFile;
 
 /// Templates registry.
@@ -355,19 +355,19 @@ impl Registry<'_> {
     }
 
     /// Renders OpenOCD `swo` command script.
-    pub fn openocd_swo(
+    pub fn openocd_swo_gdb(
         &self,
         config: &Config,
         ports: &BTreeSet<u32>,
         reset: bool,
-        pipe: &Path,
-        output: Option<&Path>,
+        // pipe: &Path,
+        output: Option<u16>,
     ) -> Result<NamedTempFile> {
         let data = json!({
             "config": config,
             "ports": ports,
             "reset": reset,
-            "pipe": pipe,
+            // "pipe": pipe,
             "output": output,
         });
         helpers::clear_vars();
@@ -380,7 +380,7 @@ where
     F: FnOnce(&File) -> Result<(), E>,
     E: Error + Send + Sync + 'static,
 {
-    let temp_file = NamedTempFile::new_in(temp_dir())?;
+    let temp_file = NamedTempFile::new_in(env::temp_dir())?;
     f(temp_file.as_file())?;
     Ok(temp_file)
 }

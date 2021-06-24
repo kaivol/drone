@@ -5,7 +5,7 @@ use drone::{
     color::Color,
     templates::Registry,
     utils::{
-        block_with_signals, crate_root, register_signals, run_command, run_wrapper,
+        crate_root, register_signals, run_command, run_wrapper,
         search_rust_tool,
     },
 };
@@ -14,53 +14,89 @@ use std::{
     collections::HashMap,
     env,
     ffi::{OsStr, OsString},
-    fs::{create_dir_all, File},
+    fs::{create_dir_all},
     path::Path,
-    process::Command,
 };
+use tokio::process::Command;
+use drone::utils::WithSignals;
+use tokio::time::Duration;
+use tokio::fs::File;
+use tokio::io::{BufReader, AsyncBufReadExt};
+use futures::StreamExt;
 
-fn main() {
-    run_wrapper(Color::Never, run);
+#[tokio::main]
+async fn main() {
+    run_wrapper(Color::Never, run()).await;
 }
 
-fn run() -> Result<()> {
+async fn run() -> Result<()> {
     let args = env::args_os().skip(1).collect::<Vec<_>>();
     let config = Config::read_from_current_dir()?;
     let registry = Registry::new()?;
     let mut signals = register_signals()?;
 
-    let crate_root = crate_root()?;
-    let target = block_with_signals(&mut signals, true, run_drone_print_target)?;
+    let crate_root = crate_root().await?;
+    let target = drone::utils::resolve_target().await?;
     let target = crate_root.join("target").join(target);
     create_dir_all(&target)?;
     let stage_one = target.join("layout.ld.1");
     let stage_two = target.join("layout.ld.2");
     {
-        let stage_one_file = File::create(&stage_one)?;
-        let stage_two_file = File::create(&stage_two)?;
+        let stage_one_file = std::fs::File::create(&stage_one)?;
+        let stage_two_file = std::fs::File::create(&stage_two)?;
         registry.layout_ld(&config, false, &stage_one_file)?;
         registry.layout_ld(&config, true, &stage_two_file)?;
     }
 
-    if let Some(output_position) = args.iter().position(|arg| arg == "-o") {
-        let linker = linker_command(stage_one.as_ref(), &args, &[])?;
-        block_with_signals(&mut signals, true, || run_command(linker))?;
+    let linker = linker_command(stage_one.as_ref(), &args, &[]).await?;
+    run_command(linker).with_signals(&mut signals, true).await?;
 
-        let size = size_command(&args[output_position + 1])?;
-        let syms = block_with_signals(&mut signals, true, || run_size(size))?
-            .into_iter()
-            .map(|(name, size)| format!("--defsym=_{}_section_size={}", name, size))
-            .collect::<Vec<_>>();
+    let output_file = output(&args).await?;
+    let size = size_command(&output_file).await?;
+    let syms = run_size(size)
+        .with_signals(&mut signals, true).await?
+        .into_iter()
+        .map(|(name, size)| format!("--defsym=_{}_section_size={}", name, size))
+        .collect::<Vec<_>>();
 
-        let linker = linker_command(stage_two.as_ref(), &args, &syms)?;
-        block_with_signals(&mut signals, true, || run_command(linker))?;
-    }
+    let linker = linker_command(stage_two.as_ref(), &args, &syms).await?;
+    run_command(linker).with_signals(&mut signals, true).await?;
 
     Ok(())
 }
 
-fn linker_command(script: &Path, args: &[OsString], syms: &[String]) -> Result<Command> {
-    let mut rust_lld = Command::new(search_rust_tool("rust-lld")?);
+async fn output(args: &Vec<OsString>) -> Result<OsString> {
+    let position = args.iter().position(|arg| arg == "-o");
+    if let Some(position) = position {
+        return Ok(args[position + 1].clone());
+    }
+
+    let files = args.iter().filter_map(|x|
+        if let Some(x) = x.to_str() {
+            if x.starts_with('@') {
+                Some(x[1..].to_owned())
+            } else {
+                None
+            }
+        } else {
+            panic!("Invalid string")
+        }
+    );
+    for file in files {
+        let file = File::open(file).await?;
+        let mut reader = BufReader::new(file);
+        let mut lines = reader.lines();
+        while let Some(line) = lines.next_line().await? {
+            if line == "-o" {
+                return Ok(lines.next_line().await?.unwrap().into())
+            }
+        }
+    }
+    panic!("Could not determine output")
+}
+
+async fn linker_command(script: &Path, args: &[OsString], syms: &[String]) -> Result<Command> {
+    let mut rust_lld = Command::new(search_rust_tool("rust-lld").await?);
     rust_lld.arg("-flavor").arg("gnu");
     rust_lld.arg("-T").arg(script);
     rust_lld.args(args);
@@ -68,14 +104,14 @@ fn linker_command(script: &Path, args: &[OsString], syms: &[String]) -> Result<C
     Ok(rust_lld)
 }
 
-fn size_command(output: &OsStr) -> Result<Command> {
-    let mut command = Command::new(search_rust_tool("llvm-size")?);
+async fn size_command(output: &OsStr) -> Result<Command> {
+    let mut command = Command::new(search_rust_tool("llvm-size").await?);
     command.arg("-A").arg(output);
     Ok(command)
 }
 
-fn run_size(mut command: Command) -> Result<HashMap<String, u32>> {
-    let stdout = String::from_utf8(command.output()?.stdout)?;
+async fn run_size(mut command: Command) -> Result<HashMap<String, u32>> {
+    let stdout = String::from_utf8(command.output().await?.stdout)?;
     let mut map = HashMap::new();
     for line in stdout.lines() {
         if line.starts_with('.') {
@@ -85,11 +121,4 @@ fn run_size(mut command: Command) -> Result<HashMap<String, u32>> {
         }
     }
     Ok(map)
-}
-
-fn run_drone_print_target() -> Result<String> {
-    let mut command = Command::new("drone");
-    command.arg("print").arg("target");
-    let stdout = String::from_utf8(command.output()?.stdout)?;
-    Ok(stdout.trim().to_string())
 }

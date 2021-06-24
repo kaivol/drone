@@ -2,19 +2,18 @@
 
 #![allow(missing_docs)]
 
-use crate::{
-    color::Color,
-    probe::{Log, Probe},
-    utils::de_from_str,
-};
+use std::ffi::OsString;
+use std::path::PathBuf;
+
 use anyhow::Error;
-use drone_config::parse_size;
-use std::{
-    ffi::{OsStr, OsString},
-    os::unix::ffi::OsStrExt,
-    path::PathBuf,
-};
 use structopt::StructOpt;
+
+use drone_config::parse_size;
+
+use crate::color::Color;
+use crate::probe::Log;
+use crate::probe::Probe;
+use crate::utils::de_from_str;
 
 /// Drone OS command line utility.
 #[derive(Debug, StructOpt)]
@@ -83,11 +82,11 @@ pub struct NewCmd {
 pub struct HeapCmd {
     /// Heap trace file obtained from the device
     #[structopt(
-        short = "f",
-        long,
-        name = "heaptrace",
-        default_value = "heaptrace",
-        parse(from_os_str)
+    short = "f",
+    long,
+    name = "heaptrace",
+    default_value = "heaptrace",
+    parse(from_os_str)
     )]
     pub trace_file: PathBuf,
     /// Heap configuration key.
@@ -146,8 +145,8 @@ pub struct LogCmd {
     pub reset: bool,
     /// Log output (format: \[path\]\[:port\]...)
     #[structopt(
-        name = "OUTPUT",
-        parse(try_from_os_str = parse_log_output)
+    name = "OUTPUT",
+    parse(try_from_str = parse_log_output)
     )]
     pub outputs: Vec<LogOutput>,
 }
@@ -158,7 +157,7 @@ pub struct LogOutput {
     /// Selected ports.
     pub ports: Vec<u32>,
     /// Output path.
-    pub path: OsString,
+    pub path: String,
 }
 
 #[derive(Debug, StructOpt)]
@@ -175,12 +174,11 @@ pub enum PrintSubCmd {
     SupportedDevices,
 }
 
-fn parse_log_output(src: &OsStr) -> Result<LogOutput, OsString> {
-    let mut chunks = src.as_bytes().split(|&b| b == b':');
-    let path = OsStr::from_bytes(chunks.next().unwrap()).into();
+fn parse_log_output(src: &str) -> Result<LogOutput, Error> {
+    let mut chunks = src.split(':');
+    let path = chunks.next().unwrap().to_owned();
     let ports = chunks
-        .map(|port| Ok(String::from_utf8(port.to_vec())?.parse()?))
-        .collect::<Result<_, Error>>()
-        .map_err(|err| err.to_string())?;
+        .map(|port| Ok(port.parse()?))
+        .collect::<Result<_, Error>>()?;
     Ok(LogOutput { ports, path })
 }
